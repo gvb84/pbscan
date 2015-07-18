@@ -1,0 +1,13 @@
+0.9
+- fixed x86 compilation issues by applying more patches to libuinet
+- fixed divide by zero if one specifies 0 bps for bandwidth limit
+- fixed long sleep issue when negative bandwidth limit specified
+- print TTL in verbose mode when receiving valid ACK
+- fixed race condition in initializing kicking off both threads
+
+0.8
+- added -sC and -d option to enable scanning with custom payloads 
+- added README
+
+0.7
+- first public release

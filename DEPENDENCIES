@@ -1,0 +1,7 @@
+git
+libssl-dev
+libpcap-dev
+libc6-dev
+gcc
+make
+patch

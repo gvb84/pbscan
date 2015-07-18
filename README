@@ -1,0 +1,79 @@
+SUMMARY
+
+polarbearscan is an attempt to do faster and more efficient banner grabbing
+and port scanning. It combines two different ideas which hopefully will make
+it somewhat worthy of your attention and time.
+
+The first of these ideas is to use stateless SYN scanning using
+cryptographically protected cookies to parse incoming acknowledgements. To the
+best of the author's knowledge this technique was pioneered by Dan Kaminsky in
+scanrand. Scanrand was itself part of Paketto Keiretsu, a collection of
+scanning utilities, and it was released somewhere in 2001-2002. A mirror of
+this code can be found at Packet Storm [1].
+
+The second idea is use a patched userland TCP/IP stack such that the scanner
+can restore state immediately upon receiving a cryptographically verified
+packet with both the SYN and ACK flags set. The userland stack being used here
+by polarbearscan is called libuinet [2]. Unlike some of the other userland
+TCP/IP stacks out there this one is very mature as it's simply a port of
+FreeBSD's TCP/IP stack. 
+
+By patching the libuinet stack one can then construct a socket and complete
+the standard TCP 3-way handshake by replying with a proper ACK. Doing it this
+way a fully functional TCP connection is immediately established. This as
+opposed to other scanners (such as nmap) who would have to, after noting that
+a TCP port is open, now perform a full TCP connect via the kernel to do things
+such as banner grabbing or version scanning. A full TCP connect leads leads to
+a whole new TCP 3-way handshake being performed. This completely discards the
+implicit state which was built up by the initial two packets being exchanged
+between the hosts. By avoiding this one can reduce bandwidth usage and
+immediately go from detecting that a port is open to connecting to it. This
+connection can then simply sit back and receive data in banner grab mode or it
+could send out an HTTP request.
+
+Please note that the scanner right now only supports IPv4 based scanning and
+it will only work properly over Ethernet-type interfaces (regardless whether
+these interfaces are wired or wireless). 
+
+
+INSTALLATION
+
+Compiling the code is pretty straightforward. One just needs a working
+connection to the net and git needs to be installed such that the required
+dependencies can be downloaded.  Besides that standard development utilities
+(gcc, make, patch), development editions of libraries (pthread, pcap,
+OpenSSL). On Debian based distributions one can simply install all the
+packages listed in the DEPENDENCIES file. After that one should be able to
+just type 'make' and the external dependencies will be checked out using git
+and the entire scanner will be build. This binary can then be copied to
+/usr/bin or /usr/local/bin or the like.
+
+If compilation fails please email the author (contact details below) and
+include the error output, kernel version, libc version and anything else that
+might help with reproducing and fixing the problem. Your help is kindly
+appreciated.
+
+
+USAGE
+
+blabla; explain the options
+when you press a key on stdin you see some stats being printed out
+
+
+AUTHOR
+
+This tool was written by Vincent Berg. Contact me by emailing
+gvb@santarago.org or visit my website http://santarago.org for updated
+releases/news on this scanner.
+
+
+THANKS
+
+Much appreciation for several folks that helped out testing, porting this
+cool and reporting bugs. Thanks to Ehab, Joseph, Alejandro, Julian and Diego.
+
+REFERENCES
+
+[1] http://packetstormsecurity.com/files/30489/paketto-1.10.tar.gz.html
+
+[2] http://wanproxy.org/libuinet.shtml

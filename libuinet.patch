@@ -1,0 +1,455 @@
+diff --git a/lib/libev/Makefile.in b/lib/libev/Makefile.in
+index 8d134ef..cf71727 100644
+--- a/lib/libev/Makefile.in
++++ b/lib/libev/Makefile.in
+@@ -342,7 +342,7 @@ EXTRA_DIST = LICENSE Changes libev.m4 autogen.sh \
+ 	     ev_epoll.c ev_select.c ev_poll.c ev_kqueue.c ev_port.c ev_win32.c \
+ 	     ev.3 ev.pod Symbols.ev Symbols.event
+ 
+-man_MANS = ev.3
++man_MANS = #ev.3 prevent UTF-8 man2pod errors
+ include_HEADERS = ev.h ev++.h event.h
+ lib_LTLIBRARIES = libev.la
+ AM_CFLAGS = $(UINET_CFLAGS)
+diff --git a/lib/libuinet/api_include/uinet_api.h b/lib/libuinet/api_include/uinet_api.h
+index 6efce70..2635410 100644
+--- a/lib/libuinet/api_include/uinet_api.h
++++ b/lib/libuinet/api_include/uinet_api.h
+@@ -116,7 +116,7 @@ void  uinet_soupcall_set_locked(struct uinet_socket *so, int which, int (*func)(
+ void  uinet_soupcall_unlock(struct uinet_socket *so, int which);
+ int   uinet_sysctlbyname(uinet_instance_t uinst, const char *name, char *oldp, size_t *oldplen,
+ 			 const char *newp, size_t newplen, size_t *retval, int flags);
+-int   uinet_sysctl(uinet_instance_t uinst, const int *name, u_int namelen, void *oldp, size_t *oldplen,
++int   uinet_sysctl(uinet_instance_t uinst, const int *name, unsigned int namelen, void *oldp, size_t *oldplen,
+ 		   const void *newp, size_t newplen, size_t *retval, int flags);
+ void  uinet_synfilter_getconninfo(uinet_api_synfilter_cookie_t cookie, struct uinet_in_conninfo *inc);
+ void  uinet_synfilter_getl2info(uinet_api_synfilter_cookie_t cookie, struct uinet_in_l2info *l2i);
+@@ -250,6 +250,10 @@ int uinet_if_set_batch_event_handler(uinet_if_t uif,
+ 				     void (*handler)(void *arg, int event),
+ 				     void *arg);
+ 
++int uinet_fake_soconnect(struct uinet_socket * so, struct uinet_sockaddr * nam, uint16_t sport, uint32_t iss);
++void * uinet_if_get_pcap_handler(uinet_instance_t uinst, const char * name);
++int uinet_if_set_pcap_handler(uinet_instance_t uinst, const char * name, void * handler);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/lib/libuinet/api_include/uinet_api_types.h b/lib/libuinet/api_include/uinet_api_types.h
+index 4a8b9ee..c5605f9 100644
+--- a/lib/libuinet/api_include/uinet_api_types.h
++++ b/lib/libuinet/api_include/uinet_api_types.h
+@@ -151,6 +151,7 @@ struct uinet_uio {
+ 
+ #define	UINET_SOCK_STREAM	1	/* stream socket */
+ #define	UINET_SOCK_DGRAM	2	/* datagram socket */
++#define UINET_SOCK_RAW		3	/* raw-protocol interface */
+ 
+ 
+ #define	UINET_SO_DEBUG		0x00000001	/* turn on debugging info recording */
+@@ -199,10 +200,12 @@ struct uinet_uio {
+ #define	UINET_AF_UNSPEC		0		/* unspecified */
+ #define	UINET_AF_INET		2		/* internetwork: UDP, TCP, etc. */
+ #define	UINET_AF_INET6		28		/* IPv6 */
++#define UINET_AF_ROUTE		17		/* internetwork: route */
+ 
+ #define	UINET_PF_UNSPEC		UINET_AF_UNSPEC
+ #define	UINET_PF_INET		UINET_AF_INET
+ #define	UINET_PF_INET6		UINET_AF_INET6
++#define UINET_PF_ROUTE		UINET_AF_ROUTE
+ 
+ 
+ #define	UINET_MSG_DONTWAIT	0x80		/* this message should be nonblocking */
+diff --git a/lib/libuinet/uinet_api.c b/lib/libuinet/uinet_api.c
+index b2902e7..19d7fd0 100644
+--- a/lib/libuinet/uinet_api.c
++++ b/lib/libuinet/uinet_api.c
+@@ -49,6 +49,7 @@
+ 
+ #include "uinet_internal.h"
+ #include "uinet_host_interface.h"
++#include "uinet_if_pcap.h"
+ 
+ #include "opt_inet6.h"
+ 
+@@ -252,7 +253,6 @@ uinet_ifconfig_end(struct socket *so)
+ 	soclose(so);
+ }
+ 
+-
+ int
+ uinet_interface_add_alias(uinet_instance_t uinst, const char *name,
+ 			  const char *addr, const char *braddr, const char *mask)
+@@ -311,7 +311,6 @@ out:
+ 	return (error);
+ }
+ 
+-
+ int
+ uinet_interface_create(uinet_instance_t uinst, const char *name)
+ {
+@@ -1589,4 +1588,128 @@ uinet_instance_destroy(uinet_instance_t uinst)
+ #endif
+ }
+ 
++#include "../../sys/netinet/tcp_fsm.h"
++#include "../../sys/netinet/tcp_timer.h"
++#include "../../sys/netinet/tcp_seq.h"
++
++int
++uinet_fake_soconnect(struct uinet_socket *uso, struct uinet_sockaddr * nam,
++	uint16_t sport, uint32_t iss)
++{
++	int error;
++	struct inpcb *inp = NULL, *oinp = NULL;
++	struct socket *so = (struct socket *)uso;
++	struct sockaddr_in *sinp, sin;
++	struct in_addr laddr;
++	unsigned short lport;
++	struct tcpcb *tp = NULL;
++	struct thread * td;
++
++	if (!uso || !nam) {
++		error = EINVAL;
++		return error;
++	}
++
++	sinp = (struct sockaddr_in *)nam;
++	if (nam->sa_len != sizeof (*sinp))
++		return (EINVAL);
++
++	if (sinp->sin_family == AF_INET
++	    && IN_MULTICAST(ntohl(sinp->sin_addr.s_addr)))
++		return (EAFNOSUPPORT);
++
++	td = curthread;
++
++	if (so->so_state & SS_ISCONNECTING) {
++		error = EALREADY;
++		return error;
++	}
++	CURVNET_SET(so->so_vnet);
++
++	inp = sotoinpcb(so);
++	INP_WLOCK(inp);
++
++	if (inp->inp_flags & (INP_TIMEWAIT | INP_DROPPED)) {
++		error = EINVAL;
++		goto out;
++	}
++	tp = intotcpcb(inp);
++
++	INP_HASH_WLOCK(&V_tcbinfo);
++	if (inp->inp_lport == 0) {
++		memset(&sin, 0, sizeof(sin));
++		sin.sin_port = sport;
++		sin.sin_len = sizeof(struct sockaddr_in);
++		sin.sin_family = AF_INET;
++		error = in_pcbbind(inp, (struct sockaddr *)&sin, td->td_ucred);
++		if (error) {
++			goto out;
++		}
++	}
++
++	/*
++	 * Cannot simply call in_pcbconnect, because there might be an
++	 * earlier incarnation of this same connection still in
++	 * TIME_WAIT state, creating an ADDRINUSE error.
++	 */
++	laddr = inp->inp_laddr;
++	lport = inp->inp_lport;
++	error = in_pcbconnect_setup(inp, (struct sockaddr *)nam, &laddr.s_addr, &lport,
++	    &inp->inp_faddr.s_addr, &inp->inp_fport, &oinp, td->td_ucred);
++	if (error && oinp == NULL) {
++		printf("fuckyouasdfasdfasdf\n");
++		goto out;
++	}
++	if (oinp) {
++		error = EADDRINUSE;
++		goto out;
++	}
++	inp->inp_laddr = laddr;
++	in_pcbrehash(inp);
++	INP_HASH_WUNLOCK(&V_tcbinfo);
++
++	soisconnecting(so);
++	TCPSTAT_INC(tcps_connattempt);
++	tp->t_state = TCPS_SYN_SENT;
++	tcp_timer_activate(tp, TT_KEEP, TP_KEEPINIT(tp));
++	tp->iss = htonl(iss);
++	tcp_sendseqinit(tp);
++
++	/* Advance due to sent SYN */
++	tp->snd_max++;
++	tp->snd_nxt++;
++
++out:
++	INP_HASH_WUNLOCK(&V_tcbinfo);
++	INP_WUNLOCK(inp);
++
++	CURVNET_RESTORE();
++
++	return (error);
++}
++
++void *
++uinet_if_get_pcap_handler(uinet_instance_t uinst, const char * ifname)
++{
++	struct uinet_if * uif;
++
++	if (!ifname) return NULL;
++	CURVNET_SET(uinst->ui_vnet);
++	uif = uinet_iffind_byname(ifname);
++	CURVNET_RESTORE();
++	if (!uif || uif->type != UINET_IFTYPE_PCAP) return NULL;
++	return if_pcap_get_pcap_handler(uif);
++}
++
++int
++uinet_if_set_pcap_handler(uinet_instance_t uinst, const char * ifname, void * handler)
++{
++	struct uinet_if * uif;
+ 
++	if (!ifname) return -1;
++	CURVNET_SET(uinst->ui_vnet);
++	uif = uinet_iffind_byname(ifname);
++	CURVNET_RESTORE();
++	if (!uif || uif->type != UINET_IFTYPE_PCAP) return -1;
++	return if_pcap_set_pcap_handler(uif, handler);
++}
+diff --git a/lib/libuinet/uinet_api.symlist b/lib/libuinet/uinet_api.symlist
+index f1b1cae..d9f566e 100644
+--- a/lib/libuinet/uinet_api.symlist
++++ b/lib/libuinet/uinet_api.symlist
+@@ -90,3 +90,7 @@ uinet_if_xmit
+ uinet_lock_log_set_file
+ uinet_lock_log_enable
+ uinet_lock_log_disable
++uinet_fake_soconnect
++uinet_if_get_pcap_handler
++uinet_if_set_pcap_handler
++uinet_iffind_byname
+diff --git a/lib/libuinet/uinet_config.c b/lib/libuinet/uinet_config.c
+index 5fbede0..d7a4045 100644
+--- a/lib/libuinet/uinet_config.c
++++ b/lib/libuinet/uinet_config.c
+@@ -85,7 +85,7 @@ int
+ uinet_ifcreate(uinet_instance_t uinst, uinet_iftype_t type, const char *configstr,
+ 	       const char *alias, unsigned int cdom, int cpu, uinet_if_t *uif)
+ {
+-	struct uinet_if *new_uif;
++	struct uinet_if *new_uif = NULL;
+ 	int alias_len;
+ 	int error = 0;
+ 
+diff --git a/lib/libuinet/uinet_if_pcap.c b/lib/libuinet/uinet_if_pcap.c
+index 18bed04..1483329 100644
+--- a/lib/libuinet/uinet_if_pcap.c
++++ b/lib/libuinet/uinet_if_pcap.c
+@@ -361,7 +361,6 @@ if_pcap_setup_interface(struct if_pcap_softc *sc)
+ 	ether_ifattach(ifp, sc->addr);
+ 	ifp->if_capabilities = ifp->if_capenable = IFCAP_HWSTATS;
+ 
+-
+ 	mtx_init(&sc->tx_lock, "txlk", NULL, MTX_DEF);
+ 
+ 	if (kthread_add(if_pcap_send, sc, NULL, &sc->tx_thread, 0, 0, "pcap_tx: %s", ifp->if_xname)) {
+@@ -402,3 +401,16 @@ if_pcap_detach(struct uinet_if *uif)
+ }
+ 
+ 
++void *
++if_pcap_get_pcap_handler(struct uinet_if * uif)
++{
++	if (!uif || !(uif->ifdata)) return NULL;
++	return if_pcap_host_get_pcap_handler(((struct if_pcap_softc *)uif->ifdata)->pcap_host_ctx);
++}
++
++int
++if_pcap_set_pcap_handler(struct uinet_if * uif, void * handler)
++{
++	if (!uif || !(uif->ifdata)) return -1;
++	return if_pcap_host_set_pcap_handler(((struct if_pcap_softc *)uif->ifdata)->pcap_host_ctx, handler);
++}
+diff --git a/lib/libuinet/uinet_if_pcap.h b/lib/libuinet/uinet_if_pcap.h
+index a7b84cb..a74f4f9 100644
+--- a/lib/libuinet/uinet_if_pcap.h
++++ b/lib/libuinet/uinet_if_pcap.h
+@@ -28,5 +28,7 @@
+ 
+ int if_pcap_attach(struct uinet_if *uif);
+ int if_pcap_detach(struct uinet_if *uif);
++void * if_pcap_get_pcap_handler(struct uinet_if *uif);
++int if_pcap_set_pcap_handler(struct uinet_if * uif, void * handler);
+ 
+ #endif /* _UINET_IF_PCAP_H_ */
+diff --git a/lib/libuinet/uinet_if_pcap_host.c b/lib/libuinet/uinet_if_pcap_host.c
+index 2224075..7dab625 100644
+--- a/lib/libuinet/uinet_if_pcap_host.c
++++ b/lib/libuinet/uinet_if_pcap_host.c
+@@ -46,6 +46,7 @@ struct if_pcap_host_context {
+ 	int isfile;
+ 	const char *ifname;
+ 	if_pcap_handler pkthandler;
++	pcap_handler if_pcap_packet_handler;
+ 	void *pkthandlerarg;
+ 	uint64_t last_packet_delivery;
+ 	uint64_t last_packet_timestamp;		
+@@ -139,10 +140,12 @@ if_pcap_sendpacket(struct if_pcap_host_context *ctx, const uint8_t *buf, unsigne
+ static void
+ if_pcap_packet_handler(struct if_pcap_host_context *ctx, const struct pcap_pkthdr *pkthdr, const unsigned char *pkt)
+ {
++	pcap_handler pcap_h;
+ 	uint64_t timestamp;
+ 	uint64_t now;
+ 	uint64_t time_since_last_delivery;
+ 	uint64_t time_since_last_capture;		
++	char reject = 0;
+ 
+ 	if (ctx->isfile) {
+ 		timestamp = (uint64_t)pkthdr->ts.tv_sec * 1000000000ULL + (uint64_t)pkthdr->ts.tv_usec * 1000;
+@@ -159,9 +162,30 @@ if_pcap_packet_handler(struct if_pcap_host_context *ctx, const struct pcap_pkthd
+ 		ctx->last_packet_timestamp = timestamp;
+ 	}
+ 
+-	ctx->pkthandler(ctx->pkthandlerarg, pkt, pkthdr->caplen);
++	pcap_h = if_pcap_host_get_pcap_handler(ctx);
++	if (pcap_h) {
++		pcap_h((char *)&reject, pkthdr, pkt);
++	}
++
++	if (!reject) {
++		ctx->pkthandler(ctx->pkthandlerarg, pkt, pkthdr->caplen);
++	}
+ }
+ 
++void *
++if_pcap_host_get_pcap_handler(struct if_pcap_host_context * ctx)
++{
++	if (!ctx) return NULL;
++	return ctx->if_pcap_packet_handler;
++}
++
++int
++if_pcap_host_set_pcap_handler(struct if_pcap_host_context * ctx, void * handler)
++{
++	if (!ctx) return -1;
++	ctx->if_pcap_packet_handler = handler;
++	return 0;
++}
+ 
+ int
+ if_pcap_loop(struct if_pcap_host_context *ctx)
+diff --git a/lib/libuinet/uinet_if_pcap_host.h b/lib/libuinet/uinet_if_pcap_host.h
+index 718150a..bc26a98 100644
+--- a/lib/libuinet/uinet_if_pcap_host.h
++++ b/lib/libuinet/uinet_if_pcap_host.h
+@@ -34,5 +34,7 @@ struct if_pcap_host_context *if_pcap_create_handle(const char *ifname, unsigned
+ void if_pcap_destroy_handle(struct if_pcap_host_context *ctx);
+ int if_pcap_sendpacket(struct if_pcap_host_context *ctx, const uint8_t *buf, unsigned int size);
+ int if_pcap_loop(struct if_pcap_host_context *ctx);
++void * if_pcap_host_get_pcap_handler(struct if_pcap_host_context * ctx);
++int if_pcap_host_set_pcap_handler(struct if_pcap_host_context * ctx, void * handler);
+ 
+ #endif /* _UINET_IF_PCAP_HOST_H_ */
+diff --git a/lib/libuinet/uinet_internal.h b/lib/libuinet/uinet_internal.h
+index bb139ba..0b5dd07 100644
+--- a/lib/libuinet/uinet_internal.h
++++ b/lib/libuinet/uinet_internal.h
+@@ -30,7 +30,8 @@
+ #include <sys/socket.h>
+ 
+ #include <net/if.h>
+-#include <net/vnet.h>
++//#include <net/vnet.h>
++struct vnet;
+ 
+ #include "uinet_api.h"
+ 
+diff --git a/mk/kern.mk b/mk/kern.mk
+index bd87af6..5ecd0d5 100644
+--- a/mk/kern.mk
++++ b/mk/kern.mk
+@@ -48,11 +48,6 @@ endif
+ # cache tag lines).
+ #
+ ifeq (${MACHINE_CPUARCH},i386)
+-ifneq (${COMPILER_TYPE},clang)
+-CFLAGS+=	-mno-align-long-strings -mpreferred-stack-boundary=2
+-else
+-CFLAGS+=	
+-endif
+ CFLAGS+=	
+ INLINE_LIMIT?=	8000
+ endif
+diff --git a/mk/kern.pre.mk b/mk/kern.pre.mk
+index 882b629..46fc3da 100644
+--- a/mk/kern.pre.mk
++++ b/mk/kern.pre.mk
+@@ -11,6 +11,10 @@ ifeq (${MACHINE_CPUARCH},x86_64)
+ MACHINE_CPUARCH=	amd64
+ endif
+ 
++ifeq (${MACHINE_CPUARCH},i686)
++MACHINE_CPUARCH=	i386
++endif
++
+ AWK?=		awk
+ 
+ ifdef DEBUG
+@@ -113,6 +117,7 @@ IMACROS_FILTER+= __APPLE__ __MACH__
+ IMACROS_FILTER+= __CYGWIN__ __CYGWIN32__
+ IMACROS_FILTER+= __FreeBSD__
+ IMACROS_FILTER+= __linux __linux__ __gnu__linux__ linux
++IMACROS_FILTER+= __STDC_VERSION__
+ IMACROS_FILTER+= _WIN32 _WIN64
+ 
+ SPACE= $(eval) $(eval)
+diff --git a/sys/i386/include/cpufunc.h b/sys/i386/include/cpufunc.h
+index 33190d8..eff9835 100644
+--- a/sys/i386/include/cpufunc.h
++++ b/sys/i386/include/cpufunc.h
+@@ -89,6 +89,15 @@ bsrl(u_int mask)
+ 	return (result);
+ }
+ 
++static __inline u_long
++bsrq(u_long mask)
++{
++	u_long result;
++
++	__asm ("bsrl %1,%0" : "=r" (result) : "rm" (mask));
++	return (result);
++}
++
+ static __inline void
+ clflush(u_long addr)
+ {
+@@ -178,6 +187,14 @@ fls(int mask)
+ 	return (mask == 0 ? mask : (int)bsrl((u_int)mask) + 1);
+ }
+ 
++#define	HAVE_INLINE_FLSL
++
++static __inline int
++flsl(long mask)
++{
++	return (mask == 0 ? mask : (int)bsrq((u_long)mask) + 1);
++}
++
+ #endif /* _KERNEL */
+ 
+ static __inline void
+diff --git a/sys/kern/vnode_if.src b/sys/kern/vnode_if.src
+index cccf75a..42a3b06 100644
+--- a/sys/kern/vnode_if.src
++++ b/sys/kern/vnode_if.src
+@@ -448,7 +448,7 @@ vop_advlockasync {
+ 	IN int op;
+ 	IN struct flock *fl;
+ 	IN int flags;
+-	IN struct task *task;	
++	IN struct task *task;
+ 	INOUT void **cookiep;
+ };
+ 

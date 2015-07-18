@@ -1,0 +1,15 @@
+- should we fix the packet sending routine such that we can
+  set the id, ttl and and window size; right now they're
+  set to fixed values which makes detecting the scan
+  easier but apart from that it doesnt have much of
+  an effect
+
+- FreeBSD port
+
+- add support for exclude IP's and IP ranges such that we
+  can blacklist certain IP ranges when scanning
+
+- when we're getting killed and there are still active connections
+  open we need to try and loop over them and for each and every
+  connection display a prompt similar to the standard banner grab
+  output
