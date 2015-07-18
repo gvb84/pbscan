@@ -1,0 +1,6 @@
+libuinet
+netmap
+*.o
+pbscan
+core
+core.*
