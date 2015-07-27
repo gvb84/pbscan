@@ -139,12 +139,17 @@ struct pseudohdr {
 
 /* holds callback state for the connections we're setting up */
 struct connection {
+	struct connection * next;
+	struct connection * prev;
 	ev_uinet watcher;
 	struct uinet_socket * so;
 	struct ev_uinet_ctx * soctx;
 	struct tai ts;
 	int counted;
 };
+
+/* head of linked list */
+static struct connection * first_connection = NULL;
 
 /* standard TCP/IP checksum routine */
 static unsigned short
@@ -481,6 +486,10 @@ connection_cb(struct ev_loop * loop, ev_uinet * w, int revents)
 		uinet_soclose(conn->so);
 		ev_uinet_detach(conn->soctx);
 		total_active_connections--;
+
+		if (conn->prev) conn->prev->next = conn->next;
+		if (conn->next) conn->next->prev = conn->prev;
+		if (conn == first_connection) first_connection = conn->prev;
 		free(conn);
 		
 		return;
@@ -509,6 +518,9 @@ connection_cb(struct ev_loop * loop, ev_uinet * w, int revents)
 		ev_uinet_stop(loop, &conn->watcher);
 		uinet_soclose(conn->so);
 		ev_uinet_detach(conn->soctx);
+		if (conn->prev) conn->prev->next = conn->next;
+		if (conn->next) conn->next->prev = conn->prev;
+		if (conn == first_connection) first_connection = conn->prev;
 		free(conn);
 		total_active_connections--;
 		return;
@@ -656,13 +668,43 @@ sniffer_cb(char * reject, const struct pcap_pkthdr * h,
 	conn->watcher.data = conn;
 	ev_uinet_start(loop, &conn->watcher);
 
+	/* add connection to head of linked list */
+	conn->next = first_connection;
+	conn->prev = NULL;
+	if (first_connection) conn->next->prev = conn;
+	first_connection = conn;
+
 	total_active_connections++;
 }
 
 static void
 scanner_break_cb(EV_P_ ev_timer * w, int events)
 {
+	char addrbuf[32];
+	struct connection * conn, * next;
+	struct tai now;
+	struct uinet_in_conninfo inc;
+
 	VERBOSE("playing Queen; I want to break freeeheee!!!...\n");
+
+	/* clean up active connections but print out status line for them */
+	conn = first_connection;
+	tai_now(&now);
+	while (conn) {
+		uinet_sogetconninfo(conn->so, &inc);
+		OUT("%s:%u (killed: %zus)\n",
+			uinet_inet_ntoa(inc.inc_ie.ie_faddr, addrbuf,
+			sizeof(addrbuf)), ntohs(inc.inc_ie.ie_fport),
+			((size_t)(now.x - conn->ts.x))
+		);
+		ev_uinet_stop(loop, &conn->watcher);
+		uinet_soclose(conn->so);
+		ev_uinet_detach(conn->soctx);
+		total_active_connections--;
+		next = conn->next;
+		free(conn);
+		conn = next;
+	}
 
 	ev_break(EV_A_ EVBREAK_ONE);
 }

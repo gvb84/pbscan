@@ -3,9 +3,4 @@
 - add support for exclude IP's and IP ranges such that we
   can blacklist certain IP ranges when scanning
 
-- when we're getting killed and there are still active connections
-  open we need to try and loop over them and for each and every
-  connection display a prompt similar to the standard banner grab
-  output
-
 - finish the README and document all options there
