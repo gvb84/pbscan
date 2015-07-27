@@ -1,9 +1,3 @@
-- should we fix the packet sending routine such that we can
-  set the id, ttl and and window size; right now they're
-  set to fixed values which makes detecting the scan
-  easier but apart from that it doesnt have much of
-  an effect
-
 - FreeBSD port
 
 - add support for exclude IP's and IP ranges such that we
@@ -15,4 +9,3 @@
   output
 
 - finish the README and document all options there
-

@@ -85,6 +85,10 @@ static size_t custom_data_len;		/* length of custom data */
 static ev_timer scanner_break;		/* timer to break out of event loop */
 static useconds_t sleep_between_pkts;	/* time to sleep between probes */
 pthread_t threads[1];			/* thread references */
+static uint16_t	ip_id_value;		/* IP ID value for the probes */
+static uint8_t ip_ttl_value;		/* IP TTL value for the probes */
+static uint16_t	tcp_win_value;		/* TCP Window value for the probes */
+
 
 /* stat counters */
 static size_t total_syn_sent;	
@@ -223,9 +227,9 @@ send_pkt(int fd, uint32_t src, uint32_t dst, uint16_t sport, uint16_t dport,
 	iph->ip_v = 4;
 	iph->ip_tos = 0;	
 	iph->ip_len = sizeof(struct ip) + sizeof(struct tcphdr);
-	iph->ip_id = htons(54321);
+	iph->ip_id = ip_id_value;
 	iph->ip_off = 0;
-	iph->ip_ttl = 64;
+	iph->ip_ttl = ip_ttl_value;
 	iph->ip_p = IPPROTO_TCP;
 	iph->ip_sum = 0;
 	iph->ip_src.s_addr = src;
@@ -239,7 +243,7 @@ send_pkt(int fd, uint32_t src, uint32_t dst, uint16_t sport, uint16_t dport,
 	tcph->th_off = 5;
 	tcph->th_x2 = 0;
 	tcph->th_flags = TH_SYN;
-	tcph->th_win = htons(65535);
+	tcph->th_win = tcp_win_value;
 	tcph->th_sum = 0;
 	tcph->th_urp = 0;	
 
@@ -659,6 +663,7 @@ static void
 scanner_break_cb(EV_P_ ev_timer * w, int events)
 {
 	VERBOSE("playing Queen; I want to break freeeheee!!!...\n");
+
 	ev_break(EV_A_ EVBREAK_ONE);
 }
 
@@ -668,7 +673,6 @@ scanner_done_cb(EV_P_ ev_timer * w, int events)
 	struct tai now;
 
 	if (scanner_done) {
-
 
 		tai_now(&now);
 
@@ -860,6 +864,7 @@ usage(const char * arg0)
 	fprintf(stderr, "%s [options] <target>\n\n", arg0);
 	fprintf(stderr, "  target can be specified as:\n");
 	fprintf(stderr, "   10.1.2.3; 10.0.0.2-10.0.255.255; 10.0.0.1/24\n\n");
+	fprintf(stderr, "Main options:\n");
 	fprintf(stderr, "-sB/sH/sT/sC     - scan mode (default: -sB)\n");
 	fprintf(stderr, "  Modes: B=Banner, H=HTTP, T=TLS, C=Custom\n");
 	fprintf(stderr, "-p <portlist>    - list of ports to scan\n");
@@ -869,13 +874,17 @@ usage(const char * arg0)
 	fprintf(stderr, "500bps)\n");
 	fprintf(stderr, "-d <file>        - file containing data to send ");
 	fprintf(stderr, "(-sC only)\n");
+	fprintf(stderr, "-t <timeout>     - timeout in seconds (default: 30)\n");
+	fprintf(stderr, "-v               - verbose output\n");
+	fprintf(stderr, "-x               - always output banners in hex mode");
+	fprintf(stderr, "\n\nAuxiliary options:\n");
 	fprintf(stderr, "-i <iface>       - capture interface to use\n");
 	fprintf(stderr, "-r <seed>        - random seed to use (can be in decimal or hex)\n");
-	fprintf(stderr, "-t <timeout>     - timeout in seconds (default: 30)\n");
-	fprintf(stderr, "-x               - always output banners in hex mode\n");
+	fprintf(stderr, "-T <ttl>         - IP TTL (default: 64)\n");
+	fprintf(stderr, "-W <win>         - TCP Window size (default: 65535)\n");
+	fprintf(stderr, "-I <id>          - IP ID (default: 12345)\n");
 	fprintf(stderr, "-n               - neglect setting RST drop rule\n");
 	fprintf(stderr, "-o               - show internal uinet output\n");
-	fprintf(stderr, "-v               - verbose output\n");
 	fprintf(stderr, "-h               - this screen\n");    
 	fprintf(stderr, "\n");
 	fflush(stderr);
@@ -905,6 +914,11 @@ main(int argc, char ** argv)
 	out = stdout;
 	err = stderr;
 
+	/* set default probe values */
+	ip_id_value = htons(54321);
+	ip_ttl_value = 64;
+	tcp_win_value = htons(65535);
+
 	/* default scan mode is the banner scan */
 	scan_mode = 'B';
 
@@ -914,8 +928,35 @@ main(int argc, char ** argv)
 	fprintf(out, "polarbearscan %s -- gvb@santarago.org\n\n",
 		polarbearscan_version);
 
-	while ((c = getopt(argc, argv, "vnohxi:r:p:s:b:t:d:")) != -1) {
+	while ((c = getopt(argc, argv, "vnohxi:r:p:s:b:t:d:I:T:W:")) != -1) {
 		switch (c) {
+		case 'I':
+			errno = 0;
+			j = strtol(optarg, NULL, 10);
+			if (errno || j < 0 || j > 65535) {
+				fprintf(stderr, "invalid IP ID value\n");
+				usage(argc > 0 ? argv[0] : "(unknown)");
+			}
+			ip_id_value = htons(j);
+			break;
+		case 'T':
+			errno = 0;
+			j = strtol(optarg, NULL, 10);
+			if (errno || j < 0 || j > 255) {
+				fprintf(stderr, "invalid IP TTL value\n");
+				usage(argc > 0 ? argv[0] : "(unknown)");
+			}
+			ip_ttl_value = j;
+			break;
+		case 'W':
+			errno = 0;
+			j = strtol(optarg, NULL, 10);
+			if (errno || j < 0 || j > 65535) {
+				fprintf(stderr, "invalid TCP Window value\n");
+				usage(argc > 0 ? argv[0] : "(unknown)");
+			}
+			tcp_win_value = htons(j);
+			break;
 		case 'd':
 			custom_data_fn = optarg;
 			break;
@@ -1062,7 +1103,8 @@ main(int argc, char ** argv)
 	fprintf(out, "seed: 0x%x, iface: %s, src: ", rand_seed, iface);
 	ret = get_iface_addrs(iface, &ip, NULL, NULL);
 	if (ret < 0) fatal("error while getting interface addresses!\n");
-	fprintf(out, "%s\n", ip);
+	fprintf(out, "%s (id: %u, ttl: %u, win: %u)\n", ip,
+		ntohs(ip_id_value), ip_ttl_value, ntohs(tcp_win_value));
 	free(ip);
 
 	if (scan_mode == 'C') {
@@ -1154,6 +1196,7 @@ main(int argc, char ** argv)
 	}
 
 	OUT("done\n");
+
 
 	exit(EXIT_SUCCESS);
 }

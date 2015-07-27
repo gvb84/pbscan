@@ -1,3 +1,6 @@
+0.10
+- added IP TTL, IP ID and TCP Window setting options
+
 0.9
 - fixed x86 compilation issues by applying more patches to libuinet
 - fixed divide by zero if one specifies 0 bps for bandwidth limit
