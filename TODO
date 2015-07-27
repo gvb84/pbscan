@@ -2,5 +2,3 @@
 
 - add support for exclude IP's and IP ranges such that we
   can blacklist certain IP ranges when scanning
-
-- finish the README and document all options there

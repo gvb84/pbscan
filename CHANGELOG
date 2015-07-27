@@ -1,3 +1,9 @@
+0.12
+- finished proper README documenting all options
+
+0.11
+- keep track of active connections and display when killed due to timeout
+
 0.10
 - added IP TTL, IP ID and TCP Window setting options
 

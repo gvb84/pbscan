@@ -31,9 +31,9 @@ immediately go from detecting that a port is open to connecting to it. This
 connection can then simply sit back and receive data in banner grab mode or it
 could send out an HTTP request.
 
-Please note that the scanner right now only supports IPv4 based scanning and
-it will only work properly over Ethernet-type interfaces (regardless whether
-these interfaces are wired or wireless). 
+Please note that the scanner right now only supports IPv4 based scanning and it
+will only work properly over Ethernet-type (wired or wireless) interfaces.
+There are no plans to support IPv6 or different interfaces in the near future.
 
 
 INSTALLATION
@@ -56,8 +56,105 @@ appreciated.
 
 USAGE
 
-blabla; explain the options
-when you press a key on stdin you see some stats being printed out
+Running the tool should be pretty straightforward. You will need root
+privileges. The -h option shows brief usage information and the options
+explained. In most cases one whould not need more than specifying the type of
+scan to perform, the port lists to scan and the target IP or IP-ranges. CIDR-
+noation is supported for the IP ranges.
+
+There are four different scan types which are specified with -s<arg>.
+
+-sB: This does a standard banner grab. The scanner will not send any data as
+     it will simply wait and receive data and display it up until the first
+     newline or carriage return received.
+
+-sH: This mode sends a "GET / HTTP/1.1" request to every successfully setup
+     connection. It's very useful for quickly identifying HTTP servers.
+
+-sT: TLS scanning mode sends a TLS1.0 NULL probe with zero options and zero
+     algorithms specified. However if there's a valid TLS server on the
+     receiving end it will parse out and try to figure out if it's a valid
+     TLS Error response which will then be dispalyed.
+
+-sC: Custom scanning wich will load a payload from a file (specified with -d)
+     and send this payload out to every successfully established socket. Can
+     be useful for quickly probing very specific protocols
+
+-p:  The list of TCP ports to scan which can be a range of ports or
+     single ports with ranges and single ports seperated by comma's. Some
+     examples: -p22,80,8080-9000,143 will scan port 22,80,143 and the range of
+     8080 to 9000.
+
+-b <limit>: The bandwidth limit to apply for the outgoing probes. This does not
+     apply to the data sent and received over the sockets so only to the actual
+     SYN probes being sent out. Examples: -b300k, -b67m, -b500b would yield
+     bandwidth limits of 300kbps, 76mbps and 500bps respectively.
+
+-d <filename>:  Filename of the file containing the payload used to the custom
+     scan. The entire file will be sent up until a maximum of 128kB which
+     should be more than enough for most purposes.
+
+-t<timeout>: This specifies the amount of seconds that the scanner will wait
+     after it has sent out all the probes with receiving data back over the
+     still connected sockets. That is assuming there are any otherwise it will
+     bail out the moment there's no more work left to do.
+
+-x:  This forces the tool to alwyas dump output received in hexadecimal
+     notation. Otherwise it will only dump data in hexadecimal notation if
+     non-printable characters are found.
+
+-v:  This specifies some verbose output. It's mostly only useful for debugging.
+
+-i <iface>: The interface to use for selecting the source IP and setting up
+     the pcap backend. This should not be necessary on standard machines with
+     just one properly configured NIC but with multiple NICs one might need it.
+
+-r <seed>: The random seed to use for the RNG being used. Mostly useful for
+     debugging and making sure that one can get the tool to generate the exact
+     same sequence of packets again. The argument is an integer and can be 
+     specified in hexadecimal and decimal notation.
+
+-T <ttl>: Override the default IP TTL value to use in SYN probes. Not really
+     necessary for anything but included for the sake of completeness.
+
+-W <win>: Override the default TCP Window size value to use in SYN probes. Not
+     really necessary for anything but included for the sake of completeness.
+
+-I <id>: Override the default IP ID value to use in SYN probes. Not really
+     necessary for anything but included for the sake of completeness.
+
+-n:  This option should only be used if you know what you're doing. It will
+     make sure the tool does NOT set the firewall rule to drop all outgoing
+     RST packets. If this is used then the scanner will not fork and one has
+     the responsibility to set this rule by hand as otherwise the kernel will
+     send RST packets back for every SYNACK packet received. This will make
+     the tool simply not work. The rule as it's being set on Linux is the
+     following:
+
+     $ /sbin/iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+
+-o:  This option does not do the I/O redirection so one will see more output
+     of the uinet internals. It's only added for the sake of completeness or
+     for debugging scenario's as it's not very useful otherwise.
+
+-h:  The usage information.
+
+Some examples on how to use the tool. To do a banner grab of port 22 on a /24
+range use like:
+
+     ./pbscan -sB -p22 x.x.x.x/24
+
+To do an HTTP scan on several common HTTP ports for a single IP with the output
+in hexadecimal mode use:
+
+     ./pbscan -sH -x -p80,8080-9000 x.x.x.x
+
+During scanning when you press a key on standard input you see some stats being
+printed out, such as the amount of open ports identified, the amount of valid
+TCP acks received the number of currently active connections, and how many SYN
+probes of the total have already been sent out. This will look something like:
+
+     sent: 1.97% (of 254), open: 0, active: 2, acks: 2
 
 
 AUTHOR
@@ -71,6 +168,7 @@ THANKS
 
 Much appreciation for several folks that helped out testing, porting this
 cool and reporting bugs. Thanks to Ehab, Joseph, Alejandro, Julian and Diego.
+
 
 REFERENCES
 

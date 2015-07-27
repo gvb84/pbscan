@@ -1,1 +1,1 @@
-const char * polarbearscan_version = "0.11";
+const char * polarbearscan_version = "0.12";
