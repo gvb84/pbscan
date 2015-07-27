@@ -4,3 +4,5 @@ netmap
 pbscan
 core
 core.*
+.*.swp
+tags
