@@ -5,7 +5,7 @@ NM="netmap"
 LU="libuinet"
 
 if [ ! -d $NM ]; then
-	git clone https://github.com/fichtner/netmap
+	git clone https://github.com/luigirizzo/netmap
 	cd $NM
 	git checkout 32e06f9d18bf82e40a7c5b6e769c0ca7607913fc
 	cd $ORIGPATH
