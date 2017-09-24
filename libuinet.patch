@@ -242,6 +242,19 @@ index 5fbede0..d7a4045 100644
  	int alias_len;
  	int error = 0;
  
+diff --git a/lib/libuinet/uinet_host_interface.c b/lib/libuinet/uinet_host_interface.c
+index d095625..4ccf7d8 100644
+--- a/lib/libuinet/uinet_host_interface.c
++++ b/lib/libuinet/uinet_host_interface.c
+@@ -1108,7 +1108,7 @@ uhi_arc4rand(void *ptr, unsigned int len, int reseed)
+ 
+ 	/* XXX assuming that we don't have to manually seed this */
+ 
+-	RAND_pseudo_bytes(ptr, len);
++	RAND_bytes(ptr, len);
+ #else
+ 	if (reseed)
+ 		arc4random_stir();
 diff --git a/lib/libuinet/uinet_if_pcap.c b/lib/libuinet/uinet_if_pcap.c
 index 18bed04..1483329 100644
 --- a/lib/libuinet/uinet_if_pcap.c
@@ -453,3 +466,29 @@ index cccf75a..42a3b06 100644
  	INOUT void **cookiep;
  };
  
+diff --git a/lib/libuinet/uinet_if_bridge.c b/lib/libuinet/uinet_if_bridge.c
+index c2bdb5c..7b68deb 100644
+--- a/lib/libuinet/uinet_if_bridge.c
++++ b/lib/libuinet/uinet_if_bridge.c
+@@ -200,7 +200,7 @@ if_bridge_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
+ 			if_bridge_init(sc);
+ 		else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+ 			if_bridge_stop(sc);
+-			break;
++		break;
+ 		default:
+ 			error = ether_ioctl(ifp, cmd, data);
+ 		break;
+diff --git a/lib/libuinet/uinet_if_span.c b/lib/libuinet/uinet_if_span.c
+index 4b28237..771e534 100644
+--- a/lib/libuinet/uinet_if_span.c
++++ b/lib/libuinet/uinet_if_span.c
+@@ -158,7 +158,7 @@ if_span_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
+ 			if_span_init(sc);
+ 		else if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+ 			if_span_stop(sc);
+-			break;
++		break;
+ 		default:
+ 			error = ether_ioctl(ifp, cmd, data);
+ 		break;

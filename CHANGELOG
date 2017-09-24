@@ -1,3 +1,8 @@
+0.13
+- fixed compilation issues by fixing issues caused by modern GCC
+  warnings related to indentation issues
+- removed deprecated SSL functional call and replaced with right one
+- tested compiliation on current Debian 9.1/stretch system (Sept. 2017)
 0.12
 - finished proper README documenting all options
 
