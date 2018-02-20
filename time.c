@@ -162,15 +162,15 @@ next:
 
 	switch (*p) {
 	case 'w':
-		if (d*h*m*s) return -1;
+		if ((d*h*m*s)!=0) return -1;
 		w = n*604800;
 		break;
 	case 'd':
-		if (h*m*s) return -1;
+		if ((h*m*s)!=0) return -1;
 		d = n*86400;
 		break;
 	case 'h':
-		if (m*s) return -1;
+		if ((m*s)!=0) return -1;
 		h = n*3600;
 		break;
 	case 'm':
